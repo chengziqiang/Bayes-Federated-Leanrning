@@ -1,0 +1,6 @@
+result/
+__pycache__/
+fmnist/
+data/
+.vscode/
+*.log
