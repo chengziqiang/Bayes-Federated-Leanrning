@@ -6,11 +6,29 @@ client_list =  ['a', 'b', 'c', 'd']
 batch_size = 200
 init_list = ['normal', 'uniform', 'xavier_uniform', 'xavier_normal', 'kaiming_uniform', 'kaiming_normal', 'none']
 seed_list = [0, 1, 2, 6, 8, 9]
-version = 'v0.1'
+version = 'v0.22'
 init_list = ["none"]
 seed_list = [0]
 aggregate_epochs = [1, 5, 10, 20, 50, 100]
+log_columns = ["epoch", "train loss",  "train prior", "train postprior", "train likehood", "val loss", "uncertain", "correlation", "val a",
+                        "val b", "val c", "val d"]
 
+
+#v0.1  aggregate num 1 10 50 200
+#   v0.11 set prior False
+#v0.20 search hyper-param
+#   v0.21 conclusion: 1)adam better 2)prior (0.01最优) 3)noisy (0.001~1)无影响
+#   v0.22 bayes federated RReLU, Adam, likehood loss, tensor initial parameter, change prior before aggregate
+
+
+#TODO: KL and likehood的系数,fmnist and mnist(分类数据集或别的数据集对不确定性是否有变化)
+#TODO: BN bayes, 负梯度, 局部重参化,  输出重新标准化, 不确定性预测(见过数据, 没见过区别),  sigmod等激活函数尝试, graph bayes
+#   toy linear regression(done)
+#   why in federated likehood log_prob()b不可以 完全一样的形式就可以(done)
+
+
+
+###########################################################################
 #1:a,b,c,d client
 #   v1.1:a,b(same part as d),c d client
 #   v1.3:personalization
@@ -33,5 +51,3 @@ aggregate_epochs = [1, 5, 10, 20, 50, 100]
 #   v7.5 batch400 change prior fc1 change scale
 #   v7.7:rrelu_
 #   v7.7:small layer and relu
-
-#TODO: BN bayes, 负梯度

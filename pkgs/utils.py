@@ -51,7 +51,7 @@ def init_weight(layer_name,init_type):
             pass
 
 from functools import reduce
-def aggragate_model(models, set_prior=True):
+def aggragate_model(models, set_prior=False):
     keys = list(models.keys())
     modelList = [models[key].state_dict() for key in keys]
     index = [i  for i in modelList[0].keys() if find_loc(i)]
@@ -63,9 +63,11 @@ def aggragate_model(models, set_prior=True):
         i1.insert(-3, "prior_")
         i1 = "".join(i1)
         for n in range(len(modelList)):
-            modelList[n][i] = new_state_dict[i]
             if set_prior:
-                modelList[n][i1] = new_state_dict[i]
+                # modelList[n][i1] = new_state_dict[i]
+                modelList[n][i1] = modelList[n][i]
+            modelList[n][i] = new_state_dict[i]
+            #先验为汇聚前（后）模型
             
     for i in range(len(keys)):
         models[keys[i]].load_state_dict(modelList[i])
@@ -110,14 +112,21 @@ def client_selection(clients):
     # for client in clients:
     #     yield [client]
 
-def path_init(root_path):
-    pathDict = {}
-    for path_suffix in ['model', 'log', 'test', 'weight', 'tensorboard']:
-        path = root_path + path_suffix
-        pathDict[path_suffix] = path
-        if not os.path.exists(path):
-            os.makedirs(path)
-    return pathDict
+def path_init(root_path, suffix):
+    root_path = root_path.rstrip('/')
+    path = {}
+    path["test"] = root_path + '/test' 
+    path["train"] = root_path + '/train'
+    root_path =  path["train"]
+    subPath = ['model', 'log', 'plot', 'tensorboard']
+    for sub in subPath:
+        path[sub] = root_path + '/' + sub
+    for key, value in path.items():
+        if not os.path.exists(value):
+            os.makedirs(value)
+    path["model"] += f"/{suffix}.pt"
+    path["log"] += f"/{suffix}.txt"
+    return path
 
 def df_precessing(df):
     smiles_list = df.SMILES.values.tolist()
