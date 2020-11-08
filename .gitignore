@@ -4,3 +4,6 @@ fmnist/
 data/
 .vscode/
 *.log
+.ipynb_checkpoints/
+
+

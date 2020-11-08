@@ -6,7 +6,7 @@ client_list =  ['a', 'b', 'c', 'd']
 batch_size = 200
 init_list = ['normal', 'uniform', 'xavier_uniform', 'xavier_normal', 'kaiming_uniform', 'kaiming_normal', 'none']
 seed_list = [0, 1, 2, 6, 8, 9]
-version = 'v0.22'
+version = 'v0.32'
 init_list = ["none"]
 seed_list = [0]
 aggregate_epochs = [1, 5, 10, 20, 50, 100]
@@ -16,9 +16,12 @@ log_columns = ["epoch", "train loss",  "train prior", "train postprior", "train 
 
 #v0.1  aggregate num 1 10 50 200
 #   v0.11 set prior False
-#v0.20 search hyper-param
+#v0.2 search hyper-param
 #   v0.21 conclusion: 1)adam better 2)prior (0.01最优) 3)noisy (0.001~1)无影响
 #   v0.22 bayes federated RReLU, Adam, likehood loss, tensor initial parameter, change prior before aggregate
+#v0.3 mnist
+#   v0.31 traditional learning in mnist
+#   v0.32 federated learning in mnist
 
 
 #TODO: KL and likehood的系数,fmnist and mnist(分类数据集或别的数据集对不确定性是否有变化)

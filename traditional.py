@@ -28,8 +28,8 @@ for worker in client_list:
 for worker in client_list:
     df = train_data[worker].sample(frac=0.1, random_state=0)
     train_data[worker] = train_data[worker].drop(df.index)
-    data = torch.tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
-    label = torch.tensor(df['y'].values).float().to(device).view(-1, 1)
+    data = torch.Tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
+    label = torch.Tensor(df['y'].values).float().to(device).view(-1, 1)
     test_loader[worker] = DataLoader(TensorDataset(data, label), batch_size=5000, shuffle=True)
 
 def train(args):
@@ -55,13 +55,13 @@ def train(args):
         train.append(train_data[workers[i]].sample(frac=0.9, random_state=seed))
         df = train_data[workers[i]].drop(train[i].index)
         val_weighted.append(len(df))
-        val_data[workers[i]] = torch.tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
-        label = torch.tensor(np.reshape(df['y'].values, (-1, 1))).float().to(device).view(-1, 1)
+        val_data[workers[i]] = torch.Tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
+        label = torch.Tensor(np.reshape(df['y'].values, (-1, 1))).float().to(device).view(-1, 1)
         val_label[workers[i]] = df['y'].values.reshape(-1)
         val_loader[workers[i]] = DataLoader(TensorDataset(val_data[workers[i]], label), batch_size=5000)
     df = pd.concat(train)
-    data = torch.tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
-    label = torch.tensor(df['y'].values).float().to(device).view(-1, 1)
+    data = torch.Tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
+    label = torch.Tensor(df['y'].values).float().to(device).view(-1, 1)
     train_loader = DataLoader(TensorDataset(data, label), batch_size=batch_size, shuffle=True, drop_last=True)
     val_weighted = np.array(val_weighted) / sum(val_weighted)
     outputs = torch.zeros(len(train_loader), batch_size)
@@ -82,7 +82,7 @@ def train(args):
             optimizer.step()# 可能写在循环外 也就是不设batch 结果还挺好 如果放进去效果不好可研究
         losses = np.array(losses).mean(axis=0)
         log_buffers = [epoch, losses.mean(), losses[0], losses[1], losses[2]]
-        
+
         loss_sum = []
         correlation = []
         uncertains = []
@@ -94,14 +94,14 @@ def train(args):
                 _, _, _, outputs = model.sample_elbo(data, label, 10)
                 lower_bound = np.percentile(outputs.cpu().numpy(), 25, axis=0)
                 upper_bound = np.percentile(outputs.cpu().numpy(), 75, axis=0)
-                uncertain = (upper_bound - lower_bound) 
+                uncertain = (upper_bound - lower_bound)
                 loss = np.abs(val_label[worker] - (lower_bound + upper_bound) / 2)
                 correlation.append(pearsonr(uncertain, loss)[0])
                 uncertains.append(uncertain.mean())
                 loss_sum.append(loss.mean())
         loss_sum = np.array(loss_sum)
         scheduler.step((loss_sum * val_weighted).sum())
-        loss_sum = np.array(loss_sum) 
+        loss_sum = np.array(loss_sum)
         log_buffers.extend([(loss_sum * val_weighted).sum(), np.mean(uncertains), np.mean(correlation)])
         log_buffers.extend(loss_sum)
         logger.pf(*log_buffers)
@@ -109,7 +109,7 @@ def train(args):
             writer.add_scalars(log_columns[i],{suffix:log_buffers[i]}, global_step=epoch)
 
         # if epoch % 30 == 0:
-            # model_weights_hist(model, path["weight"]+'/'+filename_prefix, epoch)
+        # model_weights_hist(model, path["weight"]+'/'+filename_prefix, epoch)
 
         if best["val_loss"] > (loss_sum * val_weighted).sum():
             best["val_loss"] = (loss_sum * val_weighted).sum()
@@ -124,27 +124,32 @@ def train(args):
         f.write('\n'+'#'*10+"train end"+'#'*10+'\n')
         f.write(test(path["model"]))
         f.write('#'*10+"test end"+'#'*10)
-    
+
 def test(model_path):
     buffers = ""
     for worker in client_list:
-        losses = []
-        for seed in seed_list:
-            model = BayesNet()
-            model.load_state_dict(torch.load(model_path))
-            model.to(device)
-            model.eval()
-            model.sample(False)
-            loss = []
-            for batch_num, (data, label) in enumerate(test_loader[worker]):
-                pred = model(data)
-                l = F.mse_loss(label, pred, reduction='none')
-                loss.extend(l.detach().cpu().numpy())
-            loss = np.array(loss).mean()
-            losses.append(loss)
-        losses = np.array(losses)
-        buffers += "{} : {:.4f}+-{:.4f}\n".format(worker, (losses.max() + losses.min()) / 2, ((losses.max() - losses.min()) / 2))
+        model = BayesNet()
+        # model.load_state_dict(model_path)
+        model.to(device)
+        model.eval()
+        model.sample()
+        outputs, labels = [], []
+        for data, label in test_loader[worker]:
+            _, _, _, output = model.sample_elbo(data, label, 200)
+            outputs.append(output.cpu().numpy())
+            labels.append(label.cpu().numpy())
+        outputs = np.concatenate(outputs, axis=1)
+        labels = np.concatenate(labels, axis=1).reshape(-1)
+        lower_bound = np.percentile(outputs, 25, axis=0)
+        upper_bound = np.percentile(outputs, 75, axis=0)
+        uncertain = (upper_bound - lower_bound)
+        loss = (labels - (lower_bound + upper_bound) / 2)**2
+        correlation = pearsonr(uncertain, loss)[0]
+        uncertain = uncertain.mean()
+        loss = loss.mean()
+        buffers += "{}: losses : {:.4f}   uncertain: {:.4f}  correlation: {:.4f}\n".format(worker, loss, uncertain, correlation)
     return buffers
+
 
 if __name__ == '__main__':
     import multiprocessing
@@ -154,7 +159,7 @@ if __name__ == '__main__':
     # map_list = []
     # for arg1 in seed_list:
     #     for arg2 in client_selection(client_list):
-    #         for arg3 in init_list: 
+    #         for arg3 in init_list:
     #             # for arg4 in np.linspace(0.1,0.9,9).astype(dtype=np.float16):
     #             for arg4 in [0.9]:
     #                 map_list.append((arg1, arg2, arg3, arg4))

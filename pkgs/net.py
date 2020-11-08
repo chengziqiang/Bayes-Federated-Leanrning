@@ -1,27 +1,30 @@
+import math
+from functools import reduce
 from typing import OrderedDict
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.parameter import Parameter
 from torch.distributions import Normal
-import math
-from functools import reduce
+from torch.nn.parameter import Parameter
+
 
 class ShareSample():
-    _sample = False
+    _sample = True
     def sample(self, is_sample=True):
         ShareSample._sample = is_sample
+
 
 class Gaussion():
     def __init__(self, mean, standard_deviation ):
         self.loc = mean
         self.scale = standard_deviation
-    
+
     def sample(self):
-        from torch.distributions.normal import Normal
+        from torch.distributions import Normal
         distribution = Normal(torch.zeros_like(self.loc), torch.ones_like(self.scale))
         return self.loc + self.sigma.mul(distribution.sample())
-    
+
     @property
     def mean(self):
         return self.loc
@@ -38,11 +41,6 @@ class BayesLinear(nn.Module, ShareSample):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        # self.weight_loc = Parameter(torch.Tensor(out_features, in_features).normal_(mean=a, std=b))
-        # self.weight_scale = Parameter(torch.Tensor(out_features, in_features).normal_(mean=a, std=b))
-        # self.bias_loc = Parameter(torch.Tensor(out_features).normal_(mean=a, std=b))
-        # self.bias_scale = Parameter(torch.Tensor(out_features).normal_(mean=a, std=b))
-
         t1 = torch.Tensor(out_features, in_features).normal_(mean=a, std=b)
         t2 = torch.Tensor(out_features, in_features).normal_(mean=-4, std=b)
         t3 = torch.Tensor(out_features).normal_(mean=a, std=b)
@@ -51,24 +49,10 @@ class BayesLinear(nn.Module, ShareSample):
         self.weight_scale = Parameter(t2)
         self.bias_loc = Parameter(t3)
         self.bias_scale = Parameter(t4)
-        # self.weight_prior_loc = Parameter(torch.Tensor([0.]), requires_grad= False)
-        # self.weight_prior_scale = Parameter(torch.Tensor([prior_var]), requires_grad= False)
-        # self.bias_prior_loc = Parameter(torch.Tensor([0.]), requires_grad= False)
-        # self.bias_prior_scale = Parameter(torch.Tensor([prior_var]), requires_grad= False)
-        #
-        # self.prior_loc = Parameter(torch.Tensor([0.]), requires_grad= False)
-        # self.prior_scale = Parameter(torch.Tensor([prior_var]), requires_grad= False)
-        # self.prior = Normal(self.prior_loc,self.prior_scale)
         self.weight_prior_loc = Parameter(t1, requires_grad= False)
         self.weight_prior_scale = Parameter(t2, requires_grad= False)
         self.bias_prior_loc = Parameter(t3, requires_grad= False)
         self.bias_prior_scale = Parameter(t4, requires_grad= False)
-        #
-        # self.weight = Gaussion(self.weight_loc, self.weight_scale)
-        # self.bias = Gaussion(self.bias_loc, self.bias_scale)       
-        # self.weight_prior = Gaussion(self.weight_prior_loc, self.weight_prior_scale)
-        # self.bias_prior = Gaussion(self.bias_prior_loc, self.bias_prior_scale)
-
         self.normal_loc = Parameter(torch.Tensor([0.]), requires_grad= False)
         self.normal_scale = Parameter(torch.Tensor([1.]), requires_grad= False)
         self.stdNormal = Normal(self.normal_loc,self.normal_scale)
@@ -77,30 +61,22 @@ class BayesLinear(nn.Module, ShareSample):
 
     def forward(self, x):
         if self.training or self._sample:
-            # weight = self.weight.sample()
-            # bias = self.bias.sample()
+            # sample weight
             w_epsilon = torch.squeeze(self.stdNormal.sample(self.weight_loc.shape))
             weight = self.weight_loc + torch.log(1+torch.exp(self.weight_scale)) * w_epsilon
-
             # sample bias
             b_epsilon = torch.squeeze(self.stdNormal.sample(self.bias_loc.shape))
             bias = self.bias_loc + torch.log(1+torch.exp(self.bias_scale)) * b_epsilon
-
-            #
-            # self.weight_prior = Normal(self.prior_loc, self.prior_scale)
-            # self.bias_prior = Normal(self.prior_loc, self.prior_scale)
-            # self.log_prior = self.prior.log_prob(weight).sum() + self.prior.log_prob(bias).sum()
             self.weight_prior = Normal(self.weight_prior_loc, torch.log(1+torch.exp(self.weight_prior_scale)))
             self.bias_prior = Normal(self.bias_prior_loc, torch.log(1+torch.exp(self.bias_prior_scale)))
             self.log_prior = self.weight_prior.log_prob(weight).mean() + self.bias_prior.log_prob(bias).mean()
-
             self.weight_post = Normal(self.weight_loc, torch.log(1 + torch.exp(self.weight_scale)))
             self.bias_post = Normal(self.bias_loc, torch.log(1 + torch.exp(self.bias_scale)))
             self.log_post = self.weight_post.log_prob(weight).mean() + self.bias_post.log_prob(bias).mean()
         else:
             weight = self.weight_loc
             bias = self.bias_loc
-        
+
         return F.linear(x, weight, bias)
 
     # def set_prior(self, buffers = None):
@@ -120,7 +96,7 @@ class BayesLinear(nn.Module, ShareSample):
     #     for key in buffers.keys():
     #         self.register_parameter(key, buffers[key])   #TODO: buffer在cuda会重赋值，使得高斯模型中loc scale 无效(初步原因parammeter是包括tensor的类,
     #                                                      # cuda会将tensor重赋值, parameter指向cuda后的tensor, 而buffer中只是一个tensor)
-                                                         # 考虑重写成nn.module方法 或 传入self
+    # 考虑重写成nn.module方法 或 传入self
 
 
 class BayesNet(nn.Module, ShareSample):
@@ -172,77 +148,72 @@ class BayesNet(nn.Module, ShareSample):
             outputs[i] = self(input).reshape(-1) # make predictions
             log_priors[i] = self.log_prior() # get log prior
             log_posts[i] = self.log_post() # get log variational posterior
-            # log_likes[i] = (-((target.reshape(-1) - outputs[i]) ** 2) / ((self.noise_tol**2) *2) - math.log(self.noise_tol) - math.log(math.sqrt(2 * math.pi))).sum()# calculate the log likelihood
             log_likes[i] = Normal(outputs[i], self.noise_tol).log_prob(target.reshape(-1)).mean() # calculate the log likelihood
-            # log_likes[i] = -F.mse_loss(outputs[i], target.reshape(-1)) # calculate the log likelihood
         # calculate monte carlo estimate of prior posterior and likelihood
         log_prior = log_priors.mean()
         log_post = log_posts.mean()
         log_like = log_likes.mean()
         # calculate the negative elbo (which is our loss function)
-        # loss = log_post - log_prior - log_like
         return log_prior, log_post, log_like, outputs.detach()
-    
+
     def log_prior(self):
         return reduce(lambda x, y: x+y, [i.log_prior for i in self.model]) / len(self.model)
-        
+
     def log_post(self):
         return reduce(lambda x, y: x+y, [i.log_post for i in self.model]) / len(self.model)
+
 
 class ToyNet(nn.Module, ShareSample):
-    def __init__(self, ):
+    def __init__(self, funcName="RReLU", noise_tol=.1, prior_var=0.01, a=.0, b=1e-10):
         super().__init__()
-        self.fc1 = BayesLinear(1, 50)
-        self.fc2 = BayesLinear(50,1)
-        # self.fc1 = Linear_BBB(1, 50,10)
-        # self.fc2 = Linear_BBB(50,1,10)
-        # self.fc3 = BayesLinear(50, 10)
-        # self.fc4 = BayesLinear(10, 1)
-        self.r1 = nn.Sigmoid()
-        # self.r2 = nn.ReLU()
-        # self.r3 = nn.ReLU()
-        # self.model = [self.fc1, self.fc2, self.fc3, self.fc4]
-        self.model = [self.fc1, self.fc2,]
-    
+        self.noise_tol = noise_tol
+        self.fc1 = BayesLinear(28*28, 512, prior_var = prior_var, a = a, b = b,)
+        self.fc2 = BayesLinear(512, 128, prior_var = prior_var, a = a, b = b,)
+        self.fc3 = BayesLinear(128, 10, prior_var = prior_var, a = a, b = b,)
+        func = getattr(nn, funcName)
+        self.r1 = func()
+        self.r2 = func()
+        self.model = [self.fc1, self.fc2, self.fc3]
+
     def forward(self, x):
+        x = x.view(-1, 28*28)
         x = self.fc1(x)
         x = self.r1(x)
-        # x = F.sigmoid(x)
         x = self.fc2(x)
-        # x = self.r2(x)
-        # x = self.fc3(x)
-        # x = self.r3(x)
-        # x = self.fc4(x)
+        x = self.r2(x)
+        x = self.fc3(x)
+        x = F.log_softmax(x, dim=1)
         return x
 
-    def sample_elbo(self, input, target, samples ):
+
+    def sample_elbo(self, input, target, samples):
         # we calculate the negative elbo, which will be our loss function
-        #initialize tensors
-        self.noise_tol = .1
-        outputs = torch.zeros(samples, target.shape[0])
-        log_priors = torch.zeros(samples)
-        log_posts = torch.zeros(samples)
-        log_likes = torch.zeros(samples)
+        device = target.device
+        outputs = torch.zeros(samples, target.shape[0], 10).to(device)
+        log_priors = torch.zeros(samples).to(device)
+        log_posts = torch.zeros(samples).to(device)
+        log_likes = torch.zeros(samples).to(device)
         # make predictions and calculate prior, posterior, and likelihood for a given number of samples
         for i in range(samples):
-            outputs[i] = self(input).reshape(-1) # make predictions
-            log_priors[i] = self.log_prior() # get log prior
-            log_posts[i] = self.log_post() # get log variational posterior
-            log_likes[i] = Normal(outputs[i], self.noise_tol).log_prob(target.reshape(-1)).sum() # calculate the log likelihood
+            outputs[i] = self(input)  # make predictions
+            log_priors[i] = self.log_prior()  # get log prior
+            log_posts[i] = self.log_post()  # get log variational posterior
+            # log_likes[i] = Normal(outputs[i], self.noise_tol).log_prob(target.reshape(-1)).mean()  
+        log_likes = F.nll_loss(outputs.mean(0), target, reduction="none")
         # calculate monte carlo estimate of prior posterior and likelihood
         log_prior = log_priors.mean()
         log_post = log_posts.mean()
         log_like = log_likes.mean()
         # calculate the negative elbo (which is our loss function)
-        loss = log_post - log_prior - log_like
-        return loss
+        return log_prior, log_post, log_like, outputs.detach()
 
     def log_prior(self):
         return reduce(lambda x, y: x+y, [i.log_prior for i in self.model]) / len(self.model)
-        
+
     def log_post(self):
         return reduce(lambda x, y: x+y, [i.log_post for i in self.model]) / len(self.model)
-        
+
+
 class KLLoss(nn.Module):
     def __init__(self, net):
         super().__init__()
@@ -251,9 +222,8 @@ class KLLoss(nn.Module):
         pass
 
 
-
 class Net(nn.Module):
-    
+
     def __init__(self, embedding=None, num=2048, output_num=1):
         super(Net, self).__init__()
         # self.fc0_1 = nn.Linear(2048,2048)

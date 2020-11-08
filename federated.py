@@ -30,8 +30,8 @@ for worker in client_list:
 for worker in client_list:
     df = train_data[worker].sample(frac=0.1, random_state=0)
     train_data[worker] = train_data[worker].drop(df.index)
-    data = torch.tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
-    label = torch.tensor(df['y'].values).float().to(device).view(-1, 1)
+    data = torch.Tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
+    label = torch.Tensor(df['y'].values).float().to(device).view(-1, 1)
     test_loader[worker] = DataLoader(TensorDataset(data, label), batch_size=5000, shuffle=True)
 # for worker in ['a','b','c']:
 #     df_d = df_d[df_d.SMILES.isin(globals()["df_{}".format(worker)].SMILES.values)]     #remain same part as abc
@@ -41,7 +41,7 @@ def train(args):
     set_seed(seed)
     models, optimizers, train_loader, val_loader, schedulers, logger, writer, path, best = {}, {}, {}, {}, {}, {}, {}, {}, {}
     suffix = "{}_{}_every{}:{{}}".format(file_name, ''.join(workers), aggregate_num)
-    degree, val_weighted = [], []
+    val_weighted =[]
     val_label = {}
     for worker in workers:
         best[worker] = {"val_loss": 9e8, "epoch": 0}
@@ -50,20 +50,20 @@ def train(args):
         writer[worker] = SummaryWriter(path[worker]["tensorboard"])
 
         df = train_data[worker].sample(frac=0.9, random_state=seed)
-        data = torch.tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
-        label = torch.tensor(df['y'].values).float().to(device).view(-1, 1)
+        data = torch.Tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
+        label = torch.Tensor(df['y'].values).float().to(device).view(-1, 1)
         train_loader[worker] = DataLoader(TensorDataset(data, label), batch_size=batch_size, shuffle=True)
 
         df = train_data[worker].drop(df.index)
-        data = torch.tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
-        label = torch.tensor(df['y'].values).float().to(device).view(-1, 1)
+        data = torch.Tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
+        label = torch.Tensor(df['y'].values).float().to(device).view(-1, 1)
         val_label[worker] = df['y'].values.reshape(-1)
 
         val_loader[worker] = DataLoader(TensorDataset(data, label), batch_size=5000, shuffle=False)
         val_weighted.append(len(df))
 
         models[worker] = BayesNet().to(device)
-        # optimizers[worker] = torch.optim.SGD(params=models[worker].parameters(), lr=0.05, 
+        # optimizers[worker] = torch.optim.SGD(params=models[worker].parameters(), lr=0.05,
         #                                         # momentum=0.7
         #                                                     )
         optimizers[worker] = torch.optim.Adam(params=models[worker].parameters(), lr=.05)
@@ -89,9 +89,6 @@ def train(args):
                 optimizer.step()# 可能写在循环外 也就是不设batch 结果还挺好 如果放进去效果不好可研究
             losses = np.array(losses).mean(axis=0)
             log_buffers[worker] = [worker, epoch, losses.mean(), losses[0], losses[1], losses[2]]
-
-        last_params = None
-        beta = 0.9
         if epoch % aggregate_num == 0 and epoch != 0:
             with torch.no_grad():
                 aggragate_model(models,True)
@@ -111,8 +108,8 @@ def train(args):
             outputs = np.concatenate(outputs, axis=1)
             lower_bound = np.percentile(outputs, 25, axis=0)
             upper_bound = np.percentile(outputs, 75, axis=0)
-            uncertain = (upper_bound - lower_bound) 
-            loss = np.abs(val_label[worker] - (lower_bound + upper_bound) / 2)
+            uncertain = (upper_bound - lower_bound)
+            loss = (val_label[worker] - (lower_bound + upper_bound) / 2) **2
             correlation[worker] = pearsonr(uncertain, loss)[0]
             uncertains[worker] = uncertain.mean()
             loss_sum.append(loss.mean())
@@ -143,51 +140,33 @@ def train(args):
         with open(path[worker]["log"], 'a') as f:
             f.write(str(best))
             f.write('\n'+'#'*30+"train end"+'#'*30+'\n')
-            f.write(test(path[worker]["model"]))        
+            f.write(test(path[worker]["model"]))
             f.write('#'*30+"test end"+'#'*30)
 
 def test(model_path):
     buffers = ""
     for worker in client_list:
-        losses = []
-        for seed in seed_list:
-            model = BayesNet()
-            model.load_state_dict(torch.load(model_path))
-            model.to(device)
-            model.eval()
-            loss = []
-            for batch_num, (data, label) in enumerate(test_loader[worker]):
-                pred = model(data)
-                l = F.mse_loss(label, pred, reduction='none')
-                loss.extend(l.detach().cpu().numpy())
-            loss = np.array(loss).mean()
-            losses.append(loss)
-        losses = np.array(losses)
-        buffers += "{} : {:.4f}+-{:.4f}\n".format(worker, (losses.max() + losses.min()) / 2, ((losses.max() - losses.min()) / 2))
+        model = BayesNet()
+        # model.load_state_dict(model_path)
+        model.to(device)
+        model.eval()
+        model.sample()
+        outputs, labels = [], []
+        for data, label in test_loader[worker]:
+            _, _, _, output = model.sample_elbo(data, label, 200)
+            outputs.append(output.cpu().numpy())
+            labels.append(label.cpu().numpy())
+        outputs = np.concatenate(outputs, axis=1)
+        labels = np.concatenate(labels, axis=1).reshape(-1)
+        lower_bound = np.percentile(outputs, 25, axis=0)
+        upper_bound = np.percentile(outputs, 75, axis=0)
+        uncertain = (upper_bound - lower_bound)
+        loss = (labels - (lower_bound + upper_bound) / 2) **2
+        correlation = pearsonr(uncertain, loss)[0]
+        uncertain = uncertain.mean()
+        loss = loss.mean()
+        buffers += "{}: losses : {:.4f}   uncertain: {:.4f}  correlation: {:.4f}\n".format(worker, loss, uncertain, correlation)
     return buffers
-# def test(seed_list, workers, aggregate_num):
-#     suffix = f"{{}}_{{}}_every{{}}".format(file_name, ''.join(workers), aggregate_num)
-#     model_path = []
-#     for seed in seed_list:
-#         model_path.append(path_init(os.getcwd()+root_path.format(seed))["model"]+f"/{suffix}.pt")
-#     buffers = ""
-#     for worker in client_list:
-#         losses = []
-#         for i in range((model_path)):
-#             model = BayesNet()
-#             model.load_state_dict(torch.load(model_path[i]))
-#             model.to(device)
-#             model.eval()
-#             loss = []
-#             for batch_num, (data, label) in enumerate(test_loader[worker]):
-#                 pred = model(data)
-#                 l = F.mse_loss(label, pred, reduction='none')
-#                 loss.extend(l.detach().cpu().numpy())
-#             loss = np.array(loss).mean()
-#             losses.append(loss)
-#         buffers += "{} : {:.4f}+-{:.4f}\n".format(worker, (losses.max() + losses.min()) / 2, ((losses.max() - losses.min()) / 2))
-#     return  buffers
-
 if __name__ == '__main__':
     # import multiprocessing
     # from multiprocessing import Pool
@@ -203,6 +182,4 @@ if __name__ == '__main__':
     # for arg in [1, 10, 50, 100, 200]:
     arg1 = client_list
     arg2 = 1
-    train((1,arg1, arg2, "Adam", "RReLU", 1,     .1,   0.01,     0., 1e-5))
-
-
+    train((1,arg1, arg2, "Adam", "RReLU", 10,     .1,   0.01,     0., 1e-5))
