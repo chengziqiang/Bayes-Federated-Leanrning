@@ -6,11 +6,11 @@ client_list =  ['a', 'b', 'c', 'd']
 batch_size = 200
 init_list = ['normal', 'uniform', 'xavier_uniform', 'xavier_normal', 'kaiming_uniform', 'kaiming_normal', 'none']
 seed_list = [0, 1, 2, 6, 8, 9]
-version = 'v0.32'
+version = 'v0.41'
 init_list = ["none"]
 seed_list = [0]
 aggregate_epochs = [1, 5, 10, 20, 50, 100]
-log_columns = ["epoch", "train loss",  "train prior", "train postprior", "train likehood", "val loss", "uncertain", "correlation", "val a",
+log_columns = ["epoch", "train loss",  "train prior", "train postprior", "train likehood", "val loss", "uncertain1", "uncertain2", "val a",
                         "val b", "val c", "val d"]
 
 
@@ -24,7 +24,7 @@ log_columns = ["epoch", "train loss",  "train prior", "train postprior", "train 
 #   v0.32 federated learning in mnist
 
 
-#TODO: KL and likehood的系数,fmnist and mnist(分类数据集或别的数据集对不确定性是否有变化)
+#TODO: KL and likehood的系数,将先验、后验loss/客户端数（从而保证fedavg汇聚方法全局loss的统一）， fmnist and mnist(分类数据集或别的数据集对不确定性是否有变化)
 #TODO: BN bayes, 负梯度, 局部重参化,  输出重新标准化, 不确定性预测(见过数据, 没见过区别),  sigmod等激活函数尝试, graph bayes
 #   toy linear regression(done)
 #   why in federated likehood log_prob()b不可以 完全一样的形式就可以(done)

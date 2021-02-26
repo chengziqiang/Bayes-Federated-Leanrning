@@ -164,7 +164,7 @@ class Logger():
         self.buffers += self.format(*["-"*(self.max_length-1)]*len(columns)) + '\n'
 
     def pf(self, *args):
-        columns = [f"%.4f"%i if  isinstance(i, np.floating) or isinstance(i,float) else i for i in args]
+        columns = [f"%.2f"%i if  isinstance(i, np.floating) or isinstance(i,float) else i for i in args]
         columns.append(self.getStrTime())
         print(self.format(*columns))
         self.buffers += self.format(*columns) + '\n'
@@ -267,6 +267,153 @@ def check_smiles(smiles_list):
             del_smiles_list.append(smiles)
     print("number of successfully processed smiles: ", len(remained_smiles))
     return del_smiles_list
+
+def check_smiles(smiles_list):
+    """
+    Processing NaN values
+    Checking molecular legitimacy
+    :param smiles_list: smiles list of molecules
+
+    :return:
+    """
+    print("number of all smiles: ", len(smiles_list))
+
+    atom_num_dist = []
+    remained_smiles = []
+    canonical_smiles_list = []
+    del_smiles_list = []
+    for smiles in smiles_list:
+        try:
+            mol = Chem.MolFromSmiles(smiles)
+            AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=2048).ToBitString()
+            #
+            # atom_num_dist.append(len(mol.GetAtoms()))
+            # Chem.SanitizeMol(mol)
+            # Chem.DetectBondStereochemistry(mol, -1)
+            # Chem.AssignStereochemistry(mol, flagPossibleStereoCenters=True, force=True)
+            # Chem.AssignAtomChiralTagsFromStructure(mol, -1)
+            # canonical_smiles_list.append(Chem.MolToSmiles(Chem.MolFromSmiles(smiles), isomericSmiles=True))
+            remained_smiles.append(smiles)
+
+        except:
+            print('can not convert this {} smiles'.format(smiles))
+            del_smiles_list.append(smiles)
+    print("number of successfully processed smiles: ", len(remained_smiles))
+    return del_smiles_list
+
+
+def get_aqsol_data(path = "data/aqsoldb.csv", clientList = ['a','b','c','d'], seed = 1):
+    """
+    获取水溶性数据集
+
+    Args:
+        path (str, optional): 水溶性数据的路径. Defaults to "data/aqsoldb.csv".
+        seed (int, optional): 随机种子. Defaults to 1.
+
+    Returns:
+        test_df (DataFrame): 测试集
+        train_df (DataFrame): 训练集
+    """
+    df = pd.read_csv(path)
+    train_data, test_data = {}, {}
+    for name, group in df.groupby("user"):
+        if name in clientList:
+            train_data[name] = group.sample(frac=0.9, random_state=seed)
+            group = group.drop(train_data[name].index)
+        test_data[name] = group
+    return train_data, test_data
+
+
+def get_hERG_data(path = "data/hERG.csv", clientList = ["ChEMBL26", "PubChem-NCATS", "PubChem-JHICC", "Cai"], seed = 1):
+    """
+    获取hERG数据集
+
+    Args:
+        path (str, optional): hERG数据集路径. Defaults to "data/hERG.csv".
+        seed (int, optional): 随机种子. Defaults to 1.
+
+    Returns:
+        test_df (DataFrame): 测试集
+        train_df (DataFrame): 训练集
+
+    """
+    df = pd.read_csv(path)
+    train_data, test_data = {}, {}
+    for name, group in df.groupby("user"):
+        if name in clientList:
+            train_data[name] = group.sample(frac=0.9, random_state=seed)
+            group = group.drop(train_data[name].index)
+        test_data[name] = group
+    return train_data, test_data
+
+
+def get_kinase_data(path = "../data/kinase.csv", seed = 1, kinase = "AKT1"):
+    """
+    获取kinase数据集
+
+    Args:
+        path (str, optional): kinase数据集路径. Defaults to "data/hERG.csv".
+        seed (int, optional): 随机种子. Defaults to 1.
+
+    Returns:
+        test_df (DataFrame): 测试集
+        train_df (DataFrame): 训练集
+
+    """
+    df = pd.read_csv(path)
+    df = df.rename({kinase: "y"}, axis=1)
+    df = df.dropna(axis=0, subset=["y"])
+    test_df = df.groupby("user").sample(frac=0.1, random_state=seed)
+    df = df.drop(index=test_df.index)
+    train_df = df.sample(frac=1, random_state=seed)
+    return test_df, train_df
+
+
+def get_client_list(df):
+    """
+    获取参与训练的客户列表
+
+    Args:
+        df (DataFrame): 输入初始读入的数据集
+
+    Returns:
+        client_list (List): 客户端列表 
+    """
+    return list(df["user"].unique())
+
+
+def df2xy(df):
+    """
+    将DataFrame转化为网络输入的特征和标签
+
+    Args:
+        df (DataFrame): 数据集
+
+    Returns:
+        x (array): 特征
+        y (array): 标签
+    """
+    x = df[["x"+str(i) for i in range(2048)]].values
+    y = df["y"].values
+    return torch.Tensor(x), torch.Tensor(y)
+
+def get_k_fold_data(df, k = 5, seed = 1):
+    """
+    将数据集划分为k份
+
+    Args:
+        df (DataFrame): 数据集
+        k (int, optional): 划分的折数. Defaults to 5.
+        seed (int, optional): 随机种子. Defaults to 1.
+
+    Returns:
+        k_fold_df_list (List[DataFrame, ...]): 包含k个DataFrame的列表
+    """
+    n = len(df) // 5
+    k_fold_df_list = []
+    for i in range(k):
+        k_fold_df_list.append(df.iloc[i*n:(i+1)*n, :])
+    return k_fold_df_list
 
 class MseLossNan(nn.Module):
     def __init__(self):

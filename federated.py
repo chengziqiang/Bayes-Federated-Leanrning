@@ -19,7 +19,7 @@ from pkgs import *
 
 UTC_time = datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%b_%d_%H:%M')
 file_name = __file__.split('/')[-1].split('.')[0]
-os.environ["CUDA_VISIBLE_DEVICES"]= "1"
+os.environ["CUDA_VISIBLE_DEVICES"]= "0"
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 log_columns =  ["client"] + log_columns
 root_path = f"/result/{version}/"
@@ -182,4 +182,4 @@ if __name__ == '__main__':
     # for arg in [1, 10, 50, 100, 200]:
     arg1 = client_list
     arg2 = 1
-    train((1,arg1, arg2, "Adam", "RReLU", 10,     .1,   0.01,     0., 1e-5))
+    train((1,arg1, arg2, "Adam", "Sigmoid", 1,     .1,   0.01,     0., 1e-5))

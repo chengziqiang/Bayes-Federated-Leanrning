@@ -22,15 +22,17 @@ os.environ["CUDA_VISIBLE_DEVICES"]= "0"
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 root_path = f"/result/{version}/"
 
-train_data, test_data, test_loader = {}, {}, {}
-for worker in client_list:
-    train_data[worker] = pd.read_csv("data/dataset_{}.csv".format(worker))
-for worker in client_list:
-    df = train_data[worker].sample(frac=0.1, random_state=0)
-    train_data[worker] = train_data[worker].drop(df.index)
-    data = torch.Tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
-    label = torch.Tensor(df['y'].values).float().to(device).view(-1, 1)
-    test_loader[worker] = DataLoader(TensorDataset(data, label), batch_size=5000, shuffle=True)
+train_data, test_data = get_aqsol_data()
+# train_data, test_data, test_loader = {}, {}, {}
+
+# for worker in client_list:
+#     train_data[worker] = pd.read_csv("data/dataset_{}.csv".format(worker))
+# for worker in client_list:
+#     df = train_data[worker].sample(frac=0.1, random_state=0)
+#     train_data[worker] = train_data[worker].drop(df.index)
+#     data = torch.Tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
+#     label = torch.Tensor(df['y'].values).float().to(device).view(-1, 1)
+#     test_loader[worker] = DataLoader(TensorDataset(data, label), batch_size=5000, shuffle=True)
 
 def train(args):
     seed, workers, optim, funcName, sample_num, noise_tol, prior_var, a, b = args
@@ -41,68 +43,86 @@ def train(args):
     logger = Logger(log_columns ,path["log"], header=str(args))
     writer = SummaryWriter(path["tensorboard"])
     model = BayesNet(funcName = funcName, prior_var = prior_var, a = a, b = b,).to(device)
-    optimizer = torch.optim.Adam(params=model.parameters(), lr=.01)
-    # optimizer = torch.optim.SGD(params=model.parameters(), lr=.001, momentum=0.8)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=6, min_lr=0.00001)
+    # optimizer = torch.optim.Adam(params=model.parameters(), lr=.01)
+    optimizer = torch.optim.SGD(params=model.parameters(), lr=.01, momentum=0.8)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=4, min_lr=0.0001)
     best = {'val_loss': 9e8, 'epoch': 0}
 
-    train = []
+    train_loader = {}
     val_loader = {}
     val_weighted = []
     val_data = {}
     val_label = {}
-    for i in range(len(workers)):
-        train.append(train_data[workers[i]].sample(frac=0.9, random_state=seed))
-        df = train_data[workers[i]].drop(train[i].index)
-        val_weighted.append(len(df))
-        val_data[workers[i]] = torch.Tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
-        label = torch.Tensor(np.reshape(df['y'].values, (-1, 1))).float().to(device).view(-1, 1)
-        val_label[workers[i]] = df['y'].values.reshape(-1)
-        val_loader[workers[i]] = DataLoader(TensorDataset(val_data[workers[i]], label), batch_size=5000)
-    df = pd.concat(train)
-    data = torch.Tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
-    label = torch.Tensor(df['y'].values).float().to(device).view(-1, 1)
-    train_loader = DataLoader(TensorDataset(data, label), batch_size=batch_size, shuffle=True, drop_last=True)
-    val_weighted = np.array(val_weighted) / sum(val_weighted)
-    outputs = torch.zeros(len(train_loader), batch_size)
-    log_likes = torch.zeros(len(train_loader), batch_size)
+    for worker in workers:
+        df = train_data[worker].sample(frac=0.9, random_state=seed)
+        data, label = df2xy(df)
+        train_loader[worker] = DataLoader(TensorDataset(data.float().to(device), label.float().view(-1, 1).to(device)), batch_size=batch_size, shuffle=True, drop_last=True)
+        data, label = df2xy(train_data[worker].drop(df.index))
+        val_loader[worker] = DataLoader(TensorDataset(data.float().to(device), label.float().view(-1, 1).to(device)), batch_size=50000)
+
+    # for i in range(len(workers)):
+    #     train.append(train_data[workers[i]].sample(frac=0.9, random_state=seed))
+    #     df = train_data[workers[i]].drop(train[i].index)
+    #     val_weighted.append(len(df))
+    #     val_data[workers[i]] = torch.Tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
+    #     label = torch.Tensor(np.reshape(df['y'].values, (-1, 1))).float().to(device).view(-1, 1)
+    #     val_label[workers[i]] = df['y'].values.reshape(-1)
+    #     val_loader[workers[i]] = DataLoader(TensorDataset(val_data[workers[i]], label), batch_size=5000)
+    # df = pd.concat(train)
+    # data = torch.Tensor(df[['x' + str(i) for i in range(2048)]].values).float().to(device)
+    # label = torch.Tensor(df['y'].values).float().to(device).view(-1, 1)
+    # train_loader = DataLoader(TensorDataset(data, label), batch_size=batch_size, shuffle=True, drop_last=True)
+    # val_weighted = np.array(val_weighted) / sum(val_weighted)
+    # outputs = torch.zeros(len(train_loader), batch_size)
+    # log_likes = torch.zeros(len(train_loader), batch_size)
 
     for epoch in range(500):
         losses = []
-        model.sample(False)
+        model.sample(True)
         model.train()
         grad_weight = torch.Tensor([1 / sample_num]).to(device)
-        for batch_num, (data, label) in enumerate(train_loader):
-            optimizer.zero_grad()
-            log_prior, log_post, log_like, _ = model.sample_elbo(data, label, sample_num)
-            loss_sum = log_post - log_prior - log_like
-            loss_sum.backward()
-            losses.append(list(map(lambda x: x.detach().cpu(), [log_prior, log_post, log_like])))
-            nn.utils.clip_grad_norm_(model.parameters(), 5)
-            optimizer.step()# 可能写在循环外 也就是不设batch 结果还挺好 如果放进去效果不好可研究
+        for worker in workers:
+            for batch_num, (data, label) in enumerate(train_loader[worker]):
+                optimizer.zero_grad()
+                log_prior, log_post, log_like, _ = model.sample_elbo(data, label, sample_num)
+                loss_sum = log_post - log_prior - log_like
+                loss_sum.backward()
+                losses.append(list(map(lambda x: x.detach().cpu(), [log_prior, log_post, log_like])))
+                nn.utils.clip_grad_norm_(model.parameters(), 5)
+                optimizer.step()# 可能写在循环外 也就是不设batch 结果还挺好 如果放进去效果不好可研究
         losses = np.array(losses).mean(axis=0)
         log_buffers = [epoch, losses.mean(), losses[0], losses[1], losses[2]]
 
         loss_sum = []
         correlation = []
-        uncertains = []
+        uncertains1 = []
+        uncertains2 = []
         model.eval()
         model.sample()
         for worker in workers:
+            for batch_num, (data, label) in enumerate(train_loader):
+                # pred = model(data)
+                _, _, _, outputs = model.sample_elbo(data, label, 100)
+                lower_bound = np.percentile(outputs.cpu().numpy(), 5, axis=10)
+                upper_bound = np.percentile(outputs.cpu().numpy(), 95, axis=0)
+                uncertain = (upper_bound - lower_bound)
+                uncertains1.extend(uncertain.tolist())
+
+        for worker in workers:
             for batch_num, (data, label) in enumerate(val_loader[worker]):
                 # pred = model(data)
-                _, _, _, outputs = model.sample_elbo(data, label, 10)
-                lower_bound = np.percentile(outputs.cpu().numpy(), 25, axis=0)
-                upper_bound = np.percentile(outputs.cpu().numpy(), 75, axis=0)
+                _, _, _, outputs = model.sample_elbo(data, label, 100)
+                lower_bound = np.percentile(outputs.cpu().numpy(), 5, axis=0)
+                upper_bound = np.percentile(outputs.cpu().numpy(), 95, axis=0)
                 uncertain = (upper_bound - lower_bound)
                 loss = np.abs(val_label[worker] - (lower_bound + upper_bound) / 2)
                 correlation.append(pearsonr(uncertain, loss)[0])
-                uncertains.append(uncertain.mean())
+                uncertains2.extend(uncertain.tolist())
                 loss_sum.append(loss.mean())
         loss_sum = np.array(loss_sum)
         scheduler.step((loss_sum * val_weighted).sum())
         loss_sum = np.array(loss_sum)
-        log_buffers.extend([(loss_sum * val_weighted).sum(), np.mean(uncertains), np.mean(correlation)])
+        log_buffers.extend([(loss_sum * val_weighted).sum(), np.mean(uncertains1), np.mean(uncertains2)])
         log_buffers.extend(loss_sum)
         logger.pf(*log_buffers)
         for i in range(1, len(log_columns)):
@@ -166,4 +186,5 @@ if __name__ == '__main__':
     # pool.map(train, map_list)
 
     # param: seed, workers, funcName, sample_num, noise_tol, prior_var, a, b
-    train((0,client_list, "Adam", "RReLU", 1,     .01,         0.01,     0., 1e-5))
+    train((0,client_list, "SGD", "ELU", 10,     .01,         0.01,     0., 1e-2))
+    #TODO: 不确定性应该由两部分数据构成计算, 同一数据集训练不确定性下降, 
